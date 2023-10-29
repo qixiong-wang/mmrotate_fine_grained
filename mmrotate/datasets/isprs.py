@@ -14,19 +14,10 @@ import shutil
 import tempfile
 import time
 from venv import create
-import zipfile
-from collections import defaultdict
-from functools import partial
-
 import mmcv
 import numpy as np
 import torch
-from mmcv.ops import nms_rotated
 
-
-from mmrotate.core import obb2poly_np
-
-from xml.dom.minidom import Document
 from PIL import Image
 
 @DATASETS.register_module()
@@ -65,47 +56,4 @@ class FAIR1M_Dataset(DOTADataset):
     
     metainfo = {'classes':CLASSES,'palette':PALETTE}
     METAINFO = {'classes':CLASSES,'palette':PALETTE}
-
-
-    def merge_det(self, results, nproc=4):
-        """Merging patch bboxes into full image.
-
-        Args:
-            results (list): Testing results of the dataset.
-            nproc (int): number of process. Default: 4.
-        """
-        collector = defaultdict(list)
-        for idx in range(len(self)):
-            result = results[idx]
-            img_id = self.img_ids[idx]
-            splitname = img_id.split('__')
-            oriname = splitname[0]
-            pattern1 = re.compile(r'__\d+___\d+')
-            x_y = re.findall(pattern1, img_id)
-            x_y_2 = re.findall(r'\d+', x_y[0])
-            x, y = int(x_y_2[0]), int(x_y_2[1])
-            new_result = []
-            for i, dets in enumerate(result):
-                bboxes, scores = dets[:, :-1], dets[:, [-1]]
-                ori_bboxes = bboxes.copy()
-                ori_bboxes[..., :2] = ori_bboxes[..., :2] + np.array(
-                    [x, y], dtype=np.float32)
-                labels = np.zeros((bboxes.shape[0], 1)) + i
-                new_result.append(
-                    np.concatenate([labels, ori_bboxes, scores], axis=1))
-
-            new_result = np.concatenate(new_result, axis=0)
-            collector[oriname].append(new_result)
-
-        merge_func = partial(_merge_func, CLASSES=self.CLASSES, iou_thr=0.1)
-        if nproc <= 1:
-            print('Single processing')
-            merged_results = mmcv.track_iter_progress(
-                (map(merge_func, collector.items()), len(collector)))
-        else:
-            print('Multiple processing')
-            merged_results = mmcv.track_parallel_progress(
-                merge_func, list(collector.items()), nproc)
-
-        return zip(*merged_results)
 
