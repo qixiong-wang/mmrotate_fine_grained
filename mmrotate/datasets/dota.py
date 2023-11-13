@@ -39,7 +39,7 @@ class DOTADataset(BaseDataset):
 
     def __init__(self,
                  diff_thr: int = 100,
-                 img_suffix: str = 'png',
+                 img_suffix: str = 'tif',
                  **kwargs) -> None:
         self.diff_thr = diff_thr
         self.img_suffix = img_suffix
@@ -55,8 +55,10 @@ class DOTADataset(BaseDataset):
                    }  # in mmdet v2.0 label is 0-based
         data_list = []
         if self.ann_file == '':
+
             img_files = glob.glob(
                 osp.join(self.data_prefix['img_path'], f'*.{self.img_suffix}'))
+   
             for img_path in img_files:
                 data_info = {}
                 data_info['img_path'] = img_path
@@ -80,6 +82,9 @@ class DOTADataset(BaseDataset):
                 img_id = osp.split(txt_file)[1][:-4]
                 data_info['img_id'] = img_id
                 img_name = img_id + f'.{self.img_suffix}'
+              
+                # if self.ann_file != '/home/ningwy/FAIR1M1.0/split_ms/train/annfiles/':
+                #     img_name = img_id + '.png'
                 data_info['file_name'] = img_name
                 data_info['img_path'] = osp.join(self.data_prefix['img_path'],
                                                  img_name)

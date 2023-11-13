@@ -106,6 +106,8 @@ class RotatedRTMDetHead(RTMDetHead):
         cls_scores = []
         bbox_preds = []
         angle_preds = []
+        import pdb
+        pdb.set_trace()
         for idx, (x, scale, stride) in enumerate(
                 zip(feats, self.scales, self.prior_generator.strides)):
             cls_feat = x
@@ -161,6 +163,7 @@ class RotatedRTMDetHead(RTMDetHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
+        
         assert stride[0] == stride[1], 'h stride is not equal to w stride!'
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(
             -1, self.cls_out_channels).contiguous()
@@ -830,9 +833,14 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
               levels, each is a 4D-tensor, the channels number is
               num_base_priors * angle_dim.
         """
+        
         cls_scores = []
         bbox_preds = []
         angle_preds = []
+
+        from mmrotate.models.utils.lsk import LSKNet
+        lsknet = LSKNet(img_size=128, in_chans=256, embed_dims=[256, 256, 256], num_stages=3)
+        lsk_feat = lsknet.forward(feats)
         for idx, (x, stride) in enumerate(
                 zip(feats, self.prior_generator.strides)):
             cls_feat = x
@@ -840,7 +848,9 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
 
             for cls_layer in self.cls_convs[idx]:
                 cls_feat = cls_layer(cls_feat)
-            cls_score = self.rtm_cls[idx](cls_feat)
+
+            cls_score = self.rtm_cls[idx](cls_feat)#torch.Size([4, 37, 128, 128])
+            lsk_cls_score = self.rtm_cls[idx](lsk_feat[idx])
 
             for reg_layer in self.reg_convs[idx]:
                 reg_feat = reg_layer(reg_feat)
@@ -849,6 +859,8 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
                 objectness = self.rtm_obj[idx](reg_feat)
                 cls_score = inverse_sigmoid(
                     sigmoid_geometric_mean(cls_score, objectness))
+                lsk_cls_score = inverse_sigmoid(
+                    sigmoid_geometric_mean(lsk_cls_score, objectness))
             if self.exp_on_reg:
                 reg_dist = self.rtm_reg[idx](reg_feat).exp() * stride[0]
             else:
@@ -856,7 +868,7 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
 
             angle_pred = self.rtm_ang[idx](reg_feat)
 
-            cls_scores.append(cls_score)
+            cls_scores.append((cls_score + 3 * lsk_cls_score) / 4)
             bbox_preds.append(reg_dist)
             angle_preds.append(angle_pred)
         return tuple(cls_scores), tuple(bbox_preds), tuple(angle_preds)

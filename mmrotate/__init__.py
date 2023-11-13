@@ -6,7 +6,7 @@ from mmengine.utils import digit_version
 
 from .version import __version__, short_version
 
-mmcv_minimum_version = '2.0.0rc4'
+mmcv_minimum_version = '1.6.0'
 mmcv_maximum_version = '2.1.0'
 mmcv_version = digit_version(mmcv.__version__)
 
@@ -26,8 +26,9 @@ assert (mmengine_version >= digit_version(mmengine_minimum_version)
     f'Please install mmengine>={mmengine_minimum_version}, ' \
     f'<{mmengine_maximum_version}.'
 
-mmdet_minimum_version = '3.0.0rc6'
-mmdet_maximum_version = '3.1.0'
+# mmdet_minimum_version = '3.0.0rc6'
+mmdet_minimum_version = '2.0.0'
+mmdet_maximum_version = '3.4.0'
 mmdet_version = digit_version(mmdet.__version__)
 
 assert (mmdet_version >= digit_version(mmdet_minimum_version)

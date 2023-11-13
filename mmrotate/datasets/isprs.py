@@ -35,15 +35,24 @@ class FAIR1M_Dataset(DOTADataset):
         img_suffix (str): The suffix of images. Defaults to 'png'.
     """
 
-    CLASSES = ('Passenger-Ship', 'Motorboat', 'Fishing-Boat',
-               'Tugboat', 'other-ship', 'Engineering-Ship', 'Liquid-Cargo-Ship',
-               'Dry-Cargo-Ship', 'Warship', 'Small-Car', 'Bus',
-               'Cargo-Truck', 'Dump-Truck', 'other-vehicle', 'Van',
-               'Trailer', 'Tractor', 'Excavator', 'Truck-Tractor',
-               'Boeing737', 'Boeing747', 'Boeing777', 'Boeing787',
-               'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',
-               'other-airplane', 'Baseball-Field', 'Basketball-Court',
-               'Football-Field', 'Tennis-Court', 'Roundabout', 'Intersection', 'Bridge')
+    # CLASSES = ('Passenger-Ship', 'Motorboat', 'Fishing-Boat',
+    #            'Tugboat', 'other-ship', 'Engineering-Ship', 'Liquid-Cargo-Ship',
+    #            'Dry-Cargo-Ship', 'Warship', 'Small-Car', 'Bus',
+    #            'Cargo-Truck', 'Dump-Truck', 'other-vehicle', 'Van',
+    #            'Trailer', 'Tractor', 'Excavator', 'Truck-Tractor',
+    #            'Boeing737', 'Boeing747', 'Boeing777', 'Boeing787',
+    #            'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',
+    #            'other-airplane', 'Baseball-Field', 'Basketball-Court',
+    #            'Football-Field', 'Tennis-Court', 'Roundabout', 'Intersection', 'Bridge')
+    CLASSES = ('Passenger', 'Motorboat', 'Fishing',#2
+               'Tugboat', 'other-ship', 'Engineering', 'Liquid',#6
+               'Dry', 'Warship', 'Small', 'Bus',#10
+               'Cargo', 'Dump', 'other-vehicle', 'Van',#14
+               'Trailer', 'Tractor', 'Excavator', 'Truck',#18
+               'Boeing737', 'Boeing747', 'Boeing777', 'Boeing787',#22
+               'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',#28
+               'other-airplane', 'Baseball', 'Basketball',#31
+               'Football', 'Tennis', 'Roundabout', 'Intersection', 'Bridge')
     
     PALETTE = [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),
          (0, 60, 100), (0, 80, 100), (0, 0, 70), (0, 0, 192), (250, 170, 30),
