@@ -83,8 +83,8 @@ class DOTADataset(BaseDataset):
                 data_info['img_id'] = img_id
                 img_name = img_id + f'.{self.img_suffix}'
               
-                # if self.ann_file != '/home/ningwy/FAIR1M1.0/split_ms/train/annfiles/':
-                #     img_name = img_id + '.png'
+                if self.ann_file != '/home/ningwy/FAIR1M1.0/split_ms/train/annfiles/':
+                    img_name = img_id + '.png'
                 data_info['file_name'] = img_name
                 data_info['img_path'] = osp.join(self.data_prefix['img_path'],
                                                  img_name)

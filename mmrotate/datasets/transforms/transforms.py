@@ -1,16 +1,20 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from numbers import Number
 from typing import List, Optional, Union
-
+import random
+from PIL import Image, ImageDraw
+import datetime
 import cv2
+import math
 import mmcv
+import torch
 import numpy as np
 from mmcv.transforms import BaseTransform
 from mmcv.transforms.utils import cache_randomness
 from mmdet.structures.bbox import BaseBoxes, get_box_type
 from mmdet.structures.mask import PolygonMasks
 from mmengine.utils import is_list_of
-
+from mmrotate.structures.bbox import RotatedBoxes
 from mmrotate.registry import TRANSFORMS
 
 
@@ -439,4 +443,228 @@ class ConvertMask2BoxType(BaseTransform):
         repr_str = self.__class__.__name__
         repr_str += f'(box_type_cls={self.box_type_cls}, '
         repr_str += f'keep_mask={self.keep_mask})'
+        return repr_str
+
+@TRANSFORMS.register_module()
+class CopySample(BaseTransform):
+
+    def __init__(
+        self,
+        max_len=100,
+        num_classes=80,
+    ):
+        self.max_len = max_len
+        self.num_classes = num_classes
+        self.select_data = {'sample':[], 'bboxes':[], 'polys':[], 'labels':[]}
+        
+        super(CopySample, self).__init__()
+        
+    def storage_sample(self, data):
+        labels = data['gt_bboxes_labels'] #N
+        for i, label in enumerate(labels):
+            # if label<19 or label>28:
+            #     continue
+            if self.select_data['labels'].count(label) < self.max_len:
+                img = data['img']
+                bbox = data['gt_bboxes'][i].tensor[0].tolist()
+                poly = data['instances'][i]['bbox']
+                x_k, y_k = data['scale_factor']
+                if x_k == y_k:
+                    poly = [p*x_k for p in poly]
+                else:
+                    poly = [x * y_k if i % 2 != 0 else x * x_k for i, x in enumerate(poly)]
+         
+
+                x_max, x_min = min(img.shape[1], max(poly[0::2])), max(0, min(poly[0::2]))
+                y_max, y_min = min(img.shape[0], max(poly[1::2])), max(0, min(poly[1::2]))
+                if x_max<x_min or y_max<y_min:
+                    continue
+                
+        
+                # x_avg , y_avg = bbox[0], bbox[1]
+                # x_p_avg , y_p_avg = sum(poly[0::2])/4, sum(poly[1::2])/4
+                # # print(f"{bbox},({round(x_p_avg)},{round(y_p_avg)})")
+                # if round(x_avg)//10!=round(x_p_avg)//10 or round(y_avg)//10!=round(y_p_avg)//10:
+                #     import pdb
+                #     pdb.set_trace()
+                   
+                sample = np.zeros((int(x_max)-int(x_min), int(y_max)-int(y_min), 3))
+                sample = img[int(y_min):int(y_max), int(x_min):int(x_max)]
+
+                self.select_data['sample'].append(sample)
+                self.select_data['bboxes'].append(bbox)
+                self.select_data['polys'].append(poly)
+                self.select_data['labels'].append(label)
+            else: 
+                index = self.select_data['labels'].index(label)
+                self.select_data['sample'].pop(index)
+                self.select_data['bboxes'].pop(index)
+                self.select_data['polys'].pop(index)
+                self.select_data['labels'].pop(index)
+        # print('\n\n\n',self.select_data['bboxes'], self.select_data['polys'],'\n\n\n')
+
+    def transform(self, results):
+        """Call function to make a copy-paste of image.
+
+        Args:
+            results (dict): Result dict.
+        Returns:
+            dict: Result dict with copy-paste transformed.
+        """
+        data = results.copy()
+        storage_sample_len = len(self.select_data['sample'])
+        
+
+        img = results['img']
+        labels = results['gt_bboxes_labels'] #N
+        bboxes = results['gt_bboxes'] #N*5
+
+        
+        if storage_sample_len > 0:
+            copy_num = min(10, random.randint(0, storage_sample_len))
+            if copy_num==0:
+                return results
+            random_integers = np.random.randint(0, storage_sample_len, copy_num)
+            
+            # print('\n\n\n',self.select_data['bboxes'], self.select_data['polys'],'\n\n\n')
+            copy_sample_list = [self.select_data['sample'][i] for i in random_integers]
+            copy_bbox_list = [self.select_data['bboxes'][i] for i in random_integers]
+            copy_ploy_list = [self.select_data['polys'][i] for i in random_integers]
+            copy_label_list = [self.select_data['labels'][i] for i in random_integers]
+            for i in range(copy_num):
+                poly = copy_ploy_list[i][:8]
+ 
+                x_max, x_min = min(img.shape[1], max(poly[0::2])), max(0, min(poly[0::2]))
+                y_max, y_min = min(img.shape[0], max(poly[1::2])), max(0, min(poly[1::2]))
+
+                if x_max>img.shape[0] or y_max>img.shape[1]:
+                    continue
+                
+                if img[int(y_min):int(y_max), int(x_min):int(x_max)].shape != copy_sample_list[i].shape:
+                    continue
+                # print((x_max+x_min)/2,(y_max+y_min)/2,copy_bbox_list[i])
+                # import pdb
+                # pdb.set_trace()
+                img[int(y_min):int(y_max), int(x_min):int(x_max)] = copy_sample_list[i] *0.5 + 0.5* img[int(y_min): int(y_max), int(x_min): int(x_max)]
+      
+                bboxes = RotatedBoxes(torch.cat([bboxes.tensor, torch.tensor([copy_bbox_list[i]])], dim=0))
+                labels = np.append(labels, copy_label_list[i])
+
+            
+            self.draw_box(img, bboxes)
+            import pdb
+            pdb.set_trace()
+            results['gt_bboxes_labels'] = labels
+            results['gt_bboxes'] = bboxes
+            results['img'] = img
+            results['gt_ignore_flags'] = np.full(len(results['gt_bboxes_labels']), False, dtype=bool)
+        self.storage_sample(data)
+        return results
+
+    def draw_box(self, img, bboxes):
+        image = Image.fromarray(img)
+        draw = ImageDraw.Draw(image)
+        for i in range(bboxes.tensor.size(0)):
+            _, p1, p2, p3, p4 = self.obb2poly_np_le90(bboxes.tensor[i])
+            box_coordinates = [p1, p2, p3, p4]
+            # point = (bboxes.tensor[i][0].numpy(), bboxes.tensor[i][1].numpy())
+            # box_coordinates = [(point[0]-10,point[1]-10),(point[0]-10,point[1]+10),(point[0]+10,point[1]+10),(point[0]+10,point[1]-10)]
+            # draw.point(point, fill="red")
+            # draw.ellipse((point[0]-5, point[1]+5, point[0]-5, point[1]+5), fill="red", width=5)
+            draw.polygon(box_coordinates, outline="red", width=3)
+        # draw.save('view/'+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'.png')
+        image.save('view/'+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+'.png')
+
+    def obb2poly_np_le90(self, obboxes):
+        """Convert oriented bounding boxes to polygons.
+
+        Args:
+            obbs (ndarray): [x_ctr,y_ctr,w,h,angle,score]
+
+        Returns:
+            polys (ndarray): [x0,y0,x1,y1,x2,y2,x3,y3,score]
+        """
+        try:
+            center, w, h, theta = np.split(obboxes, (2, 3, 4), axis=-1)
+        except:  # noqa: E722
+            results = np.stack([0., 0., 0., 0., 0., 0., 0., 0.], axis=-1)
+            return results.reshape(1, -1)
+        Cos, Sin = np.cos(theta), np.sin(theta)
+        vector1 = np.concatenate([w / 2 * Cos, w / 2 * Sin], axis=-1)
+        vector2 = np.concatenate([-h / 2 * Sin, h / 2 * Cos], axis=-1)
+        point1 = center - vector1 - vector2
+        point2 = center + vector1 - vector2
+        point3 = center + vector1 + vector2
+        point4 = center - vector1 + vector2
+        polys = np.concatenate([point1, point2, point3, point4], axis=-1)
+        # polys = self.get_best_begin_point(polys)
+        return polys, tuple(point1.numpy()), tuple(point2.numpy()), tuple(point3.numpy()), tuple(point4.numpy())
+
+
+    def get_best_begin_point(self, coordinates):
+        """Get the best begin points of polygons.
+
+        Args:
+            coordinate (ndarray): shape(n, 9).
+
+        Returns:
+            reorder coordinate (ndarray): shape(n, 9).
+        """
+        coordinates = list(map(self.get_best_begin_point_single, coordinates.tolist()))
+        coordinates = np.array(coordinates)
+        return coordinates
+    
+    def get_best_begin_point_single(self, coordinate):
+        """Get the best begin point of the single polygon.
+
+        Args:
+            coordinate (List): [x1, y1, x2, y2, x3, y3, x4, y4, score]
+
+        Returns:
+            reorder coordinate (List): [x1, y1, x2, y2, x3, y3, x4, y4, score]
+        """
+        x1, y1, x2, y2, x3, y3, x4, y4 = coordinate
+        xmin = min(x1, x2, x3, x4)
+        ymin = min(y1, y2, y3, y4)
+        xmax = max(x1, x2, x3, x4)
+        ymax = max(y1, y2, y3, y4)
+        combine = [[[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
+                [[x2, y2], [x3, y3], [x4, y4], [x1, y1]],
+                [[x3, y3], [x4, y4], [x1, y1], [x2, y2]],
+                [[x4, y4], [x1, y1], [x2, y2], [x3, y3]]]
+        dst_coordinate = [[xmin, ymin], [xmax, ymin], [xmax, ymax], [xmin, ymax]]
+        force = 100000000.0
+        force_flag = 0
+        for i in range(4):
+            temp_force = self.cal_line_length(combine[i][0], dst_coordinate[0]) \
+                        + self.cal_line_length(combine[i][1], dst_coordinate[1]) \
+                        + self.cal_line_length(combine[i][2], dst_coordinate[2]) \
+                        + self.cal_line_length(combine[i][3], dst_coordinate[3])
+            if temp_force < force:
+                force = temp_force
+                force_flag = i
+        if force_flag != 0:
+            pass
+        return np.array(combine[force_flag]).reshape(8)
+    
+    def cal_line_length(self, point1, point2):
+        """Calculate the length of line.
+
+        Args:
+            point1 (List): [x,y]
+            point2 (List): [x,y]
+
+        Returns:
+            length (float)
+        """
+        return math.sqrt(
+            math.pow(point1[0] - point2[0], 2) +
+            math.pow(point1[1] - point2[1], 2))
+
+    def __repr__(self):
+        repr_str = self.__class__.__name__
+        repr_str += f'max_num_pasted={self.max_num_pasted}, '
+        repr_str += f'bbox_occluded_thr={self.bbox_occluded_thr}, '
+        repr_str += f'mask_occluded_thr={self.mask_occluded_thr}, '
+        repr_str += f'selected={self.selected}, '
         return repr_str

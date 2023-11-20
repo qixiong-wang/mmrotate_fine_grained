@@ -838,6 +838,8 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
         bbox_preds = []
         angle_preds = []
 
+        import pdb
+        pdb.set_trace()
         from mmrotate.models.utils.lsk import LSKNet
         lsknet = LSKNet(img_size=128, in_chans=256, embed_dims=[256, 256, 256], num_stages=3)
         lsk_feat = lsknet.forward(feats)

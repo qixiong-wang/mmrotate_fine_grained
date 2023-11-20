@@ -2,7 +2,7 @@
 import glob
 import os.path as osp
 from typing import List
-
+from typing import Callable, List, Union
 from mmengine.dataset import BaseDataset
 import tempfile
 from mmrotate.registry import DATASETS
@@ -65,4 +65,14 @@ class FAIR1M_Dataset(DOTADataset):
     
     metainfo = {'classes':CLASSES,'palette':PALETTE}
     METAINFO = {'classes':CLASSES,'palette':PALETTE}
+
+    # def __init__(self,
+    #              diff_thr: int = 100,
+    #              img_suffix: str = 'tif',
+    #              pipeline: List[Union[dict, Callable]] = [],
+    #              **kwargs) -> None:
+    #     self.diff_thr = diff_thr
+    #     self.img_suffix = img_suffix
+    #     self.pipeline = Compose(pipeline)
+    #     super().__init__(**kwargs)
 
