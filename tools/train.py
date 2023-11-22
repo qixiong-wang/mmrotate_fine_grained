@@ -4,7 +4,7 @@ import logging
 import os
 import os.path as osp
 
-from mmdet.utils import register_all_modules as register_all_modules_mmdet
+# from mmdet.utils import register_all_modules as register_all_modules_mmdet
 from mmengine.config import Config, DictAction
 from mmengine.logging import print_log
 from mmengine.registry import RUNNERS
@@ -61,7 +61,7 @@ def main():
 
     # register all modules in mmdet into the registries
     # do not init the default scope here because it will be init in the runner
-    register_all_modules_mmdet(init_default_scope=False)
+    # register_all_modules_mmdet(init_default_scope=False)
     register_all_modules(init_default_scope=False)
 
     # load config

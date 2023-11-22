@@ -1,6 +1,5 @@
 _base_ = [
-    './_base_/default_runtime.py', './_base_/schedule_3x.py',
-]
+    './_base_/default_runtime.py', './_base_/schedule_3x.py']
 checkpoint = 'https://download.openmmlab.com/mmdetection/v3.0/rtmdet/cspnext_rsb_pretrain/cspnext-l_8xb256-rsb-a1-600e_in1k-6a760974.pth'  # noqa
 base_lr = 0.004 / 16
 optim_wrapper = dict(
@@ -39,7 +38,7 @@ model = dict(
         norm_cfg=dict(type='SyncBN'),
         act_cfg=dict(type='SiLU')),
     bbox_head=dict(
-        type='RotatedRTMDetSepBNHead_lsk',
+        type='RotatedRTMDetSepBNHead',
         num_classes=37,
         in_channels=256,
         stacked_convs=2,
@@ -93,6 +92,7 @@ train_pipeline = [
     dict(type='mmdet.LoadAnnotations', with_bbox=True, box_type='qbox'),
     dict(type='ConvertBoxType', box_type_mapping=dict(gt_bboxes='rbox')),
     dict(type='mmdet.Resize', scale=(1024, 1024), keep_ratio=True),
+    dict(type='CopySample', num_classes=37),
     dict(
         type='mmdet.RandomFlip',
         prob=0.75,
@@ -124,8 +124,8 @@ test_pipeline = [
                    'scale_factor'))
 ]
 train_dataloader = dict(
-    batch_size=4,
-    num_workers=4,
+    batch_size=1,
+    num_workers=0,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=None,
@@ -145,8 +145,8 @@ val_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='plane/val/annfiles/',
-        data_prefix=dict(img_path='plane/val/images/'),
+        ann_file='debug/val/annfiles/',
+        data_prefix=dict(img_path='debug/val/images/'),
         test_mode=True,
         pipeline=val_pipeline))
 test_dataloader = val_dataloader
@@ -154,4 +154,3 @@ test_dataloader = val_dataloader
 val_evaluator = dict(type='DOTAMetric', metric='mAP')
 test_evaluator = val_evaluator
 
-find_unused_parameters=True

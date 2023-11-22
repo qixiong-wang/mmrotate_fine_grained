@@ -1,6 +1,6 @@
 # dataset settings
-dataset_type = 'DOTADataset'
-data_root = 'data/split_ms_dota/'
+dataset_type = 'FAIR1M_Dataset'
+data_root = '/home/ningwy/FAIR1M1.0/split_ms/'
 backend_args = None
 
 train_pipeline = [
@@ -39,16 +39,16 @@ test_pipeline = [
                    'scale_factor'))
 ]
 train_dataloader = dict(
-    batch_size=2,
-    num_workers=2,
+    batch_size=6,
+    num_workers=6,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=None,
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='trainval/annfiles/',
-        data_prefix=dict(img_path='trainval/images/'),
+        ann_file='train/annfiles/',
+        data_prefix=dict(img_path='train/images/'),
         filter_cfg=dict(filter_empty_gt=True),
         pipeline=train_pipeline))
 val_dataloader = dict(
@@ -60,8 +60,8 @@ val_dataloader = dict(
     dataset=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file='trainval/annfiles/',
-        data_prefix=dict(img_path='trainval/images/'),
+        ann_file='test/annfiles/',
+        data_prefix=dict(img_path='test/images/'),
         test_mode=True,
         pipeline=val_pipeline))
 test_dataloader = val_dataloader

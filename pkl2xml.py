@@ -1,20 +1,21 @@
-import pickle
-import numpy as np
-from xml.dom.minidom import Document
 import os
-from PIL import Image
+import re
+import pdb
+import time
+import tqdm
+import torch
+import pickle
 import math
 import shutil
 import tempfile
-import time
-from collections import defaultdict
-import re
+import numpy as np
+from PIL import Image
 from functools import partial
-import mmcv
-import torch
 from mmcv.ops import nms_rotated
-import pdb
+from collections import defaultdict
+from xml.dom.minidom import Document
 from mmengine.utils import track_iter_progress, track_parallel_progress
+
 ori_cls = ('Passenger Ship', 'Motorboat', 'Fishing Boat',
                'Tugboat', 'other-ship', 'Engineering Ship', 'Liquid Cargo Ship',
                'Dry Cargo Ship', 'Warship', 'Small Car', 'Bus', 'Cargo Truck',
@@ -24,15 +25,15 @@ ori_cls = ('Passenger Ship', 'Motorboat', 'Fishing Boat',
                'A330', 'A350', 'other-airplane', 'Baseball Field', 'Basketball Court',
                'Football Field', 'Tennis Court', 'Roundabout', 'Intersection', 'Bridge')
     
-CLASSES = ('Passenger-Ship', 'Motorboat', 'Fishing-Boat',
-               'Tugboat', 'other-ship', 'Engineering-Ship', 'Liquid-Cargo-Ship',
-               'Dry-Cargo-Ship', 'Warship', 'Small-Car', 'Bus',
-               'Cargo-Truck', 'Dump-Truck', 'other-vehicle', 'Van',
-               'Trailer', 'Tractor', 'Excavator', 'Truck-Tractor',
-               'Boeing737', 'Boeing747', 'Boeing777', 'Boeing787',
-               'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',
-               'other-airplane', 'Baseball-Field', 'Basketball-Court',
-               'Football-Field', 'Tennis-Court', 'Roundabout', 'Intersection', 'Bridge')
+CLASSES = ('Passenger', 'Motorboat', 'Fishing',#2
+               'Tugboat', 'other-ship', 'Engineering', 'Liquid',#6
+               'Dry', 'Warship', 'Small', 'Bus',#10
+               'Cargo', 'Dump', 'other-vehicle', 'Van',#14
+               'Trailer', 'Tractor', 'Excavator', 'Truck',#18
+               'Boeing737', 'Boeing747', 'Boeing777', 'Boeing787',#22
+               'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',#28
+               'other-airplane', 'Baseball', 'Basketball',#31
+               'Football', 'Tennis', 'Roundabout', 'Intersection', 'Bridge')
     
 
 def create_xml(img_id, in_dicts, out_path):
@@ -216,7 +217,7 @@ def _results2submission(id_list, dets_list, out_folder=None):
         shutil.rmtree(out_folder)
         os.makedirs(out_folder)
 
-    for img_id, dets_per_cls in zip(id_list, dets_list):
+    for img_id, dets_per_cls in tqdm.tqdm(zip(id_list, dets_list), total=len(id_list)):#zip(id_list, dets_list):
         result_dict={}
         for cls_name, dets in zip(CLASSES, dets_per_cls):
             if dets.size == 0:
@@ -335,9 +336,6 @@ def pkl_xml(pkl_path, out_path, thr):
 
     with open(pkl_path, "rb") as fp_data:
         pkl_file=pickle.load(fp_data)
-    # for re in pkl_file:
-        import pdb
-        pdb.set_trace()
         format_results(pkl_file, out_path)
         # scores=re['pred_instances']['scores'].tolist()
         # bboxes=[box for i,box in enumerate(re['pred_instances']['bboxes'].tolist()) if scores[i]>thr]
@@ -350,6 +348,6 @@ def pkl_xml(pkl_path, out_path, thr):
 
 
 if __name__ == '__main__':
-    pkl_path='/home/ningwy/pycharmprojects/mmyolo-main/work_dirs/rtmdet-r_l_syncbn_fast_2xb4-36e_dota/test.pkl'
-    out_path='/home/ningwy/pycharmprojects/mmyolo-main/work_dirs/xml'
+    pkl_path='/home/ningwy/pycharmprojects/mmrotate_fine_grained/work_dirs/rotated_rtmdet_l-3x-dota_dataaug/out_epoch18.pkl'
+    out_path='/home/ningwy/pycharmprojects/mmrotate_fine_grained/work_dirs/rotated_rtmdet_l-3x-dota_dataaug/test'
     pkl_xml(pkl_path, out_path, 0.1)

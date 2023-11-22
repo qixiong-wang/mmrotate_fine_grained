@@ -121,6 +121,7 @@ dmypy.json
 data/
 data
 tmp
-
+*.pth
+view*
 # custom
 mmrotate/.mim
