@@ -149,7 +149,19 @@ val_dataloader = dict(
         data_prefix=dict(img_path='plane/val/images/'),
         test_mode=True,
         pipeline=val_pipeline))
-test_dataloader = val_dataloader
+test_dataloader = dict(
+    batch_size=1,
+    num_workers=0,
+    persistent_workers=True,
+    drop_last=False,
+    sampler=dict(type='DefaultSampler', shuffle=False),
+    dataset=dict(
+        type=dataset_type,
+        data_root=data_root,
+        ann_file='test/annfiles/',
+        data_prefix=dict(img_path='test/images/'),
+        test_mode=True,
+        pipeline=val_pipeline))
 
 val_evaluator = dict(type='DOTAMetric', metric='mAP')
 test_evaluator = val_evaluator
