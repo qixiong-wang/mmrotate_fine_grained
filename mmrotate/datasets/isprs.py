@@ -53,7 +53,7 @@ class FAIR1M_Dataset(DOTADataset):
                'ARJ21', 'C919', 'A220', 'A321', 'A330', 'A350',#28
                'other-airplane', 'Baseball', 'Basketball',#31
                'Football', 'Tennis', 'Roundabout', 'Intersection', 'Bridge')
-    
+  
     PALETTE = [(220, 20, 60), (119, 11, 32), (0, 0, 142), (0, 0, 230), (106, 0, 228),
          (0, 60, 100), (0, 80, 100), (0, 0, 70), (0, 0, 192), (250, 170, 30),
          (100, 170, 30), (220, 220, 0), (175, 116, 175), (250, 0, 30),
@@ -65,14 +65,4 @@ class FAIR1M_Dataset(DOTADataset):
     
     metainfo = {'classes':CLASSES,'palette':PALETTE}
     METAINFO = {'classes':CLASSES,'palette':PALETTE}
-
-    # def __init__(self,
-    #              diff_thr: int = 100,
-    #              img_suffix: str = 'tif',
-    #              pipeline: List[Union[dict, Callable]] = [],
-    #              **kwargs) -> None:
-    #     self.diff_thr = diff_thr
-    #     self.img_suffix = img_suffix
-    #     self.pipeline = Compose(pipeline)
-    #     super().__init__(**kwargs)
 
