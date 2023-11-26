@@ -56,7 +56,7 @@ def create_xml(img_id, in_dicts, out_path):
         node_research.appendChild(node_name)
     root.appendChild(node_research)
 
-    img = Image.open(os.path.join('/home/ningwy/FAIR1M1.0/test/images/images', img_id+'.tif'))
+    img = Image.open(os.path.join('../FAIR1M/test/images', img_id+'.tif'))
     size_list = {'width': str(img.size[0]), 'height': str(img.size[1]), 'depth': '3'}
     node_size = doc.createElement('size')
     for size in size_list:
@@ -219,6 +219,7 @@ def _results2submission(id_list, dets_list, out_folder=None):
     for img_id, dets_per_cls in zip(id_list, dets_list):
         result_dict={}
         for cls_name, dets in zip(CLASSES, dets_per_cls):
+
             if dets.size == 0:
                 continue
             bboxes = obb2poly_np_le90(dets)
@@ -336,8 +337,7 @@ def pkl_xml(pkl_path, out_path, thr):
     with open(pkl_path, "rb") as fp_data:
         pkl_file=pickle.load(fp_data)
     # for re in pkl_file:
-        import pdb
-        pdb.set_trace()
+
         format_results(pkl_file, out_path)
         # scores=re['pred_instances']['scores'].tolist()
         # bboxes=[box for i,box in enumerate(re['pred_instances']['bboxes'].tolist()) if scores[i]>thr]
@@ -350,6 +350,6 @@ def pkl_xml(pkl_path, out_path, thr):
 
 
 if __name__ == '__main__':
-    pkl_path='/home/ningwy/pycharmprojects/mmyolo-main/work_dirs/rtmdet-r_l_syncbn_fast_2xb4-36e_dota/test.pkl'
-    out_path='/home/ningwy/pycharmprojects/mmyolo-main/work_dirs/xml'
+    pkl_path='/home/wangqx/mmrotate_fine_grained/2.pkl'
+    out_path='/home/wangqx/mmrotate_fine_grained/result_20231124xml_2'
     pkl_xml(pkl_path, out_path, 0.1)

@@ -21,6 +21,7 @@ from torch import Tensor, nn
 from mmrotate.registry import MODELS, TASK_UTILS
 from mmrotate.structures import RotatedBoxes, distance2obb
 
+import torch.nn.functional as F
 
 @MODELS.register_module()
 class RotatedRTMDetHead(RTMDetHead):
@@ -65,6 +66,7 @@ class RotatedRTMDetHead(RTMDetHead):
             self.loss_angle = MODELS.build(loss_angle)
         else:
             self.loss_angle = None
+        self.relation_transformer = TransformerWithNormalizedPositionalEncoding(num_classes=self.num_classes)
 
     def _init_layers(self):
         """Initialize layers of the head."""
@@ -162,6 +164,11 @@ class RotatedRTMDetHead(RTMDetHead):
             dict[str, Tensor]: A dictionary of loss components.
         """
         assert stride[0] == stride[1], 'h stride is not equal to w stride!'
+        batch_size = cls_score.size(0)
+        height = cls_score.size(2)
+        width = cls_score.size(3)
+        pixel_num = cls_score.size(2) * cls_score.size(3)
+
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(
             -1, self.cls_out_channels).contiguous()
 
@@ -170,6 +177,9 @@ class RotatedRTMDetHead(RTMDetHead):
         else:
             bbox_pred = bbox_pred.reshape(-1, 5)
         bbox_targets = bbox_targets.reshape(-1, 5)
+        bg_class_ind = self.num_classes
+
+        pos_inds_origin = ((labels >= 0) & (labels < bg_class_ind)).nonzero().squeeze(1)
 
         labels = labels.reshape(-1)
         assign_metrics = assign_metrics.reshape(-1)
@@ -180,9 +190,10 @@ class RotatedRTMDetHead(RTMDetHead):
             cls_score, targets, label_weights, avg_factor=1.0)
 
         # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
-        bg_class_ind = self.num_classes
+
         pos_inds = ((labels >= 0)
                     & (labels < bg_class_ind)).nonzero().squeeze(1)
+        
 
         if len(pos_inds) > 0:
             pos_bbox_targets = bbox_targets[pos_inds]
@@ -219,13 +230,29 @@ class RotatedRTMDetHead(RTMDetHead):
                 pos_decode_bbox_targets,
                 weight=pos_bbox_weight,
                 avg_factor=1.0)
-
+            cls_score_new = []
+            for i in range(batch_size):
+                pos_ind_2d = pos_inds_origin[pos_inds_origin[:,0]==i]
+                pos_ind_1d = pos_ind_2d[:,0]*pixel_num+pos_ind_2d[:,1]
+                pos_cls_score = cls_score[pos_ind_1d]
+                pos_idx_norm = pos_ind_2d[:,1]/pixel_num
+                # pos_idx_x_norm = pos_ind_2d[:,1]%height/ width
+                # pos_idx_y_norm = pos_ind_2d[:,1]/height / height
+                # pos_idx_norm = torch.stack([pos_idx_x_norm,pos_idx_y_norm],dim=1)
+                # print(pos_idx_norm)
+                if len(pos_idx_norm) != 0:
+                    cls_score_new.append(self.relation_transformer(torch.sigmoid(pos_cls_score), pos_idx_norm))
+            cls_score_new = torch.cat(cls_score_new)
+            pos_label = labels[pos_inds]
+            pos_label_onehot = F.one_hot(pos_label, self.num_classes).float()
+            loss_CFP =  F.binary_cross_entropy_with_logits(cls_score_new,pos_label_onehot)
         else:
             loss_bbox = bbox_pred.sum() * 0
             pos_bbox_weight = bbox_targets.new_tensor(0.)
             loss_angle = angle_pred.sum() * 0
+            loss_CFP = cls_score.sum() * 0
 
-        return (loss_cls, loss_bbox, loss_angle, assign_metrics.sum(),
+        return (loss_cls, loss_CFP, loss_bbox, loss_angle, assign_metrics.sum(),
                 pos_bbox_weight.sum(), pos_bbox_weight.sum())
 
     def loss_by_feat(self,
@@ -310,7 +337,7 @@ class RotatedRTMDetHead(RTMDetHead):
         if self.use_hbbox_loss:
             decoded_bboxes = decoded_hbboxes
 
-        (losses_cls, losses_bbox, losses_angle, cls_avg_factors,
+        (losses_cls, loss_CFP, losses_bbox, losses_angle, cls_avg_factors,
          bbox_avg_factors, angle_avg_factors) = multi_apply(
              self.loss_by_feat_single, cls_scores, decoded_bboxes,
              angle_preds_list, labels_list, label_weights_list,
@@ -319,10 +346,13 @@ class RotatedRTMDetHead(RTMDetHead):
 
         cls_avg_factor = reduce_mean(sum(cls_avg_factors)).clamp_(min=1).item()
         losses_cls = list(map(lambda x: x / cls_avg_factor, losses_cls))
+        
+        loss_CFP = list(map(lambda x: x , loss_CFP))
 
         bbox_avg_factor = reduce_mean(
             sum(bbox_avg_factors)).clamp_(min=1).item()
         losses_bbox = list(map(lambda x: x / bbox_avg_factor, losses_bbox))
+
         if self.loss_angle is not None:
             angle_avg_factors = reduce_mean(
                 sum(angle_avg_factors)).clamp_(min=1).item()
@@ -330,10 +360,11 @@ class RotatedRTMDetHead(RTMDetHead):
                 map(lambda x: x / angle_avg_factors, losses_angle))
             return dict(
                 loss_cls=losses_cls,
+                loss_CFP = loss_CFP,
                 loss_bbox=losses_bbox,
                 loss_angle=losses_angle)
         else:
-            return dict(loss_cls=losses_cls, loss_bbox=losses_bbox)
+            return dict(loss_cls=losses_cls, loss_bbox=losses_bbox, loss_CFP = loss_CFP)
 
     def _get_targets_single(self,
                             cls_scores: Tensor,
@@ -535,6 +566,7 @@ class RotatedRTMDetHead(RTMDetHead):
                 cfg=cfg,
                 rescale=rescale,
                 with_nms=with_nms)
+            
             result_list.append(results)
         return result_list
 
@@ -636,16 +668,33 @@ class RotatedRTMDetHead(RTMDetHead):
             # `nms_pre` than before.
             score_thr = cfg.get('score_thr', 0)
 
+            num_point = len(scores)
             results = filter_scores_and_topk(
                 scores, score_thr, nms_pre,
                 dict(
                     bbox_pred=bbox_pred, angle_pred=angle_pred, priors=priors))
-            scores, labels, keep_idxs, filtered_results = results
+            scores_out, labels_out, keep_idxs, filtered_results = results
 
             bbox_pred = filtered_results['bbox_pred']
             angle_pred = filtered_results['angle_pred']
             priors = filtered_results['priors']
 
+            if len(scores_out)!=0:
+
+                scores = self.relation_transformer(scores[keep_idxs], keep_idxs/num_point)
+                # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
+                
+                scores = torch.sigmoid(scores)
+                labels = torch.argmax(scores, dim=1)
+                scores = torch.max(scores, dim=1)[0]
+            else:
+                labels = labels_out
+                scores = scores_out
+
+            # if torch.sum(labels-labels_out)!=0:
+            #     print('labels_out',labels_out,'\n','label_refine',labels)
+            # else:
+            #     print('no change')
             decoded_angle = self.angle_coder.decode(angle_pred, keepdim=True)
             bbox_pred = torch.cat([bbox_pred, decoded_angle], dim=-1)
 
@@ -668,6 +717,7 @@ class RotatedRTMDetHead(RTMDetHead):
         results.bboxes = RotatedBoxes(bboxes)
         results.scores = torch.cat(mlvl_scores)
         results.labels = torch.cat(mlvl_labels)
+
         if with_score_factors:
             results.score_factors = torch.cat(mlvl_score_factors)
 
@@ -853,10 +903,46 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
                 reg_dist = self.rtm_reg[idx](reg_feat).exp() * stride[0]
             else:
                 reg_dist = self.rtm_reg[idx](reg_feat) * stride[0]
-
+            
             angle_pred = self.rtm_ang[idx](reg_feat)
 
             cls_scores.append(cls_score)
             bbox_preds.append(reg_dist)
             angle_preds.append(angle_pred)
+
         return tuple(cls_scores), tuple(bbox_preds), tuple(angle_preds)
+
+
+class TransformerWithNormalizedPositionalEncoding(nn.Module):
+    def __init__(self, num_classes, num_layers=2, num_heads=1):
+        super(TransformerWithNormalizedPositionalEncoding, self).__init__()
+        self.num_classes = num_classes
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        # Transformer Encoder Layer
+        encoder_layers = nn.TransformerEncoderLayer(d_model=num_classes+1, 
+                                                   nhead=num_heads, 
+                                                   dim_feedforward=512)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
+
+    def forward(self, x, idx):
+        # x shape: [N, K] where N is number of samples, K is number of classes
+        # idx shape: [N, 1]
+
+        idx = idx.unsqueeze(-1)
+        # Combine logits with normalized positional indices
+        x = torch.cat([x, idx], dim=1)
+
+        # Reshape for Transformer: [N, batch_size=1, K+1]
+        x = x.unsqueeze(1)
+
+        # Pass through Transformer
+        x = self.transformer_encoder(x)
+
+        # Reshape back to [N, K+1]
+        x = x.squeeze(1)
+
+        # Optionally, remove the positional encoding before output
+        x = x[:, :-1]
+
+        return x
