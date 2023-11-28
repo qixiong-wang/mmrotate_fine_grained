@@ -235,17 +235,20 @@ class RotatedRTMDetHead(RTMDetHead):
                 pos_ind_2d = pos_inds_origin[pos_inds_origin[:,0]==i]
                 pos_ind_1d = pos_ind_2d[:,0]*pixel_num+pos_ind_2d[:,1]
                 pos_cls_score = cls_score[pos_ind_1d]
-                pos_idx_norm = pos_ind_2d[:,1]/pixel_num
-                # pos_idx_x_norm = pos_ind_2d[:,1]%height/ width
-                # pos_idx_y_norm = pos_ind_2d[:,1]/height / height
-                # pos_idx_norm = torch.stack([pos_idx_x_norm,pos_idx_y_norm],dim=1)
+                # pos_idx_norm = pos_ind_2d[:,1]/pixel_num
+                pos_idx_x = pos_ind_2d[:,1]%width*stride[0]
+                pos_idx_y = pos_ind_2d[:,1]//width*stride[1]
+
+                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
                 # print(pos_idx_norm)
-                if len(pos_idx_norm) != 0:
-                    cls_score_new.append(self.relation_transformer(torch.sigmoid(pos_cls_score), pos_idx_norm))
+                if len(pos_idx) != 0:
+                    cls_score_new.append(self.relation_transformer(torch.sigmoid(pos_cls_score), pos_idx))
             cls_score_new = torch.cat(cls_score_new)
             pos_label = labels[pos_inds]
-            pos_label_onehot = F.one_hot(pos_label, self.num_classes).float()
-            loss_CFP =  F.binary_cross_entropy_with_logits(cls_score_new,pos_label_onehot)
+            loss_CFP =  F.cross_entropy(cls_score_new,pos_label)
+            # pos_label_onehot = F.one_hot(pos_label, self.num_classes).float()
+            # loss_CFP =  F.binary_cross_entropy_with_logits(cls_score_new,pos_label_onehot)
+            
         else:
             loss_bbox = bbox_pred.sum() * 0
             pos_bbox_weight = bbox_targets.new_tensor(0.)
@@ -322,7 +325,7 @@ class RotatedRTMDetHead(RTMDetHead):
 
         # flatten_bboxes is rbox, for target assign
         flatten_bboxes = torch.cat(decoded_bboxes, 1)
-
+        
         cls_reg_targets = self.get_targets(
             flatten_cls_scores,
             flatten_bboxes,
@@ -919,30 +922,35 @@ class TransformerWithNormalizedPositionalEncoding(nn.Module):
         self.num_classes = num_classes
         self.num_layers = num_layers
         self.num_heads = num_heads
+        self.position_embedding_0 = nn.Embedding(1024, 64)
+        self.position_embedding_1 = nn.Embedding(1024, 64)
+
         # Transformer Encoder Layer
-        encoder_layers = nn.TransformerEncoderLayer(d_model=num_classes+1, 
+        encoder_layers = nn.TransformerEncoderLayer(d_model=num_classes+64, 
                                                    nhead=num_heads, 
                                                    dim_feedforward=512)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
+        self.layer_norm = nn.LayerNorm(num_classes+64)
+        self.ffn = nn.Linear(num_classes+64, num_classes)
 
     def forward(self, x, idx):
         # x shape: [N, K] where N is number of samples, K is number of classes
         # idx shape: [N, 1]
+        pos_0 = self.position_embedding_0(idx[:, 0])
+        pos_1 = self.position_embedding_1(idx[:, 1])
+        position_embedding = pos_0 + pos_1
+        # idx = idx.unsqueeze(-1)
 
-        idx = idx.unsqueeze(-1)
         # Combine logits with normalized positional indices
-        x = torch.cat([x, idx], dim=1)
+        x = torch.cat([x, position_embedding], dim=1)
 
         # Reshape for Transformer: [N, batch_size=1, K+1]
         x = x.unsqueeze(1)
 
         # Pass through Transformer
         x = self.transformer_encoder(x)
-
-        # Reshape back to [N, K+1]
+        x = self.layer_norm(x)
+        x = self.ffn(x)
         x = x.squeeze(1)
-
-        # Optionally, remove the positional encoding before output
-        x = x[:, :-1]
 
         return x
