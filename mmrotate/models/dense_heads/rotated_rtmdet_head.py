@@ -350,7 +350,7 @@ class RotatedRTMDetHead(RTMDetHead):
         cls_avg_factor = reduce_mean(sum(cls_avg_factors)).clamp_(min=1).item()
         losses_cls = list(map(lambda x: x / cls_avg_factor, losses_cls))
         
-        loss_CFP = list(map(lambda x: x , loss_CFP))
+        loss_CFP = list(map(lambda x: x *2 / cls_avg_factor, loss_CFP))
 
         bbox_avg_factor = reduce_mean(
             sum(bbox_avg_factors)).clamp_(min=1).item()
