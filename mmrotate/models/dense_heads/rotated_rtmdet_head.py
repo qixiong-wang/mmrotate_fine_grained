@@ -684,24 +684,24 @@ class RotatedRTMDetHead(RTMDetHead):
             priors = filtered_results['priors']
 
             stride = self.prior_generator.strides[level_idx]
-            if len(scores_out)!=0:
-                pos_ind_2d = keep_idxs
-                pos_idx_x = pos_ind_2d%width*stride[0]
-                pos_idx_y = pos_ind_2d//width*stride[1]
+            # if len(scores_out)!=0:
+            #     pos_ind_2d = keep_idxs
+            #     pos_idx_x = pos_ind_2d%width*stride[0]
+            #     pos_idx_y = pos_ind_2d//width*stride[1]
 
-                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
-                scores = self.relation_transformer(scores[keep_idxs], pos_idx)
+            #     pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
+            #     scores = self.relation_transformer(scores[keep_idxs], pos_idx)
 
-                # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
+            #     # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
                 
-                scores = F.softmax(scores/10)
-                labels = torch.argmax(scores, dim=1)
+            #     scores = F.softmax(scores/10)
+            #     labels = torch.argmax(scores, dim=1)
 
-                scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
+            #     scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
                 
-            else:
-                labels = labels_out
-                scores = scores_out
+            # else:
+            labels = labels_out
+            scores = scores_out
 
             # if torch.sum(labels-labels_out)!=0:
             #     print('labels_out',labels_out,'\n','label_refine',labels)
