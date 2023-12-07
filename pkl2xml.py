@@ -350,6 +350,6 @@ def pkl_xml(pkl_path, out_path, thr):
 
 
 if __name__ == '__main__':
-    pkl_path='/home/wangqx/mmrotate_fine_grained/bce_loss_16_1.pkl'
-    out_path='/home/wangqx/mmrotate_fine_grained/result_20231124xml_bce_loss_16_1'
+    pkl_path='/home/wangqx/mmrotate_fine_grained/bce_loss_12_6.pkl'
+    out_path='/home/wangqx/mmrotate_fine_grained/result_20231124xml_bce_loss_12_6'
     pkl_xml(pkl_path, out_path, 0.1)

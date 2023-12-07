@@ -645,7 +645,7 @@ class RotatedRTMDetHead(RTMDetHead):
                 cls_score, bbox_pred, angle_pred, score_factor, priors) in \
                 enumerate(zip(cls_score_list, bbox_pred_list, angle_pred_list,
                               score_factor_list, mlvl_priors)):
-
+            height, width = cls_score.size()[-2:]
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
 
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
@@ -662,6 +662,7 @@ class RotatedRTMDetHead(RTMDetHead):
                 # remind that we set FG labels to [0, num_class-1]
                 # since mmdet v2.0
                 # BG cat_id: num_class
+
                 scores = cls_score.softmax(-1)[:, :-1]
 
             # After https://github.com/open-mmlab/mmdetection/pull/6268/,
@@ -682,14 +683,22 @@ class RotatedRTMDetHead(RTMDetHead):
             angle_pred = filtered_results['angle_pred']
             priors = filtered_results['priors']
 
+            stride = self.prior_generator.strides[level_idx]
             if len(scores_out)!=0:
+                pos_ind_2d = keep_idxs
+                pos_idx_x = pos_ind_2d%width*stride[0]
+                pos_idx_y = pos_ind_2d//width*stride[1]
 
-                scores = self.relation_transformer(scores[keep_idxs], keep_idxs/num_point)
+                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
+                scores = self.relation_transformer(scores[keep_idxs], pos_idx)
+
                 # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
                 
-                scores = torch.sigmoid(scores)
+                scores = F.softmax(scores/10)
                 labels = torch.argmax(scores, dim=1)
-                scores = torch.max(scores, dim=1)[0]
+
+                scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
+                
             else:
                 labels = labels_out
                 scores = scores_out
