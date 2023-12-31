@@ -20,6 +20,9 @@ from torch import Tensor, nn
 
 from mmrotate.registry import MODELS, TASK_UTILS
 from mmrotate.structures import RotatedBoxes, distance2obb
+from mmdet.structures import SampleList
+from mmdet.models.utils  import (filter_scores_and_topk, select_single_mlvl,
+                     unpack_gt_instances)
 
 import torch.nn.functional as F
 
@@ -66,7 +69,10 @@ class RotatedRTMDetHead(RTMDetHead):
             self.loss_angle = MODELS.build(loss_angle)
         else:
             self.loss_angle = None
+        self.scene_prior_token = nn.Parameter(torch.randn(64, 256))
+        self.position_embedding = PositionalEncoding2D(256, 1024,1024)
         self.relation_transformer = TransformerWithNormalizedPositionalEncoding(num_classes=self.num_classes)
+        self.project1 = nn.Sequential(nn.Linear(64, 64), nn.LayerNorm(64))
 
     def _init_layers(self):
         """Initialize layers of the head."""
@@ -135,8 +141,34 @@ class RotatedRTMDetHead(RTMDetHead):
             bbox_preds.append(reg_dist)
             angle_preds.append(angle_pred)
         return tuple(cls_scores), tuple(bbox_preds), tuple(angle_preds)
+    
+    def loss(self, x: Tuple[Tensor], batch_data_samples: SampleList) -> dict:
+        """Perform forward propagation and loss calculation of the detection
+        head on the features of the upstream network.
 
-    def loss_by_feat_single(self, cls_score: Tensor, bbox_pred: Tensor,
+        Args:
+            x (tuple[Tensor]): Features from the upstream network, each is
+                a 4D-tensor.
+            batch_data_samples (List[:obj:`DetDataSample`]): The Data
+                Samples. It usually includes information such as
+                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
+
+        Returns:
+            dict: A dictionary of loss components.
+        """
+        outs = self(x)  ### outs = (cls_scores, bbox_preds, anchor_preds)  B*K*H*W, B*4*H*W, B*1*H*W
+
+        outputs = unpack_gt_instances(batch_data_samples)
+        (batch_gt_instances, batch_gt_instances_ignore,
+         batch_img_metas) = outputs
+
+        loss_inputs = outs + (batch_gt_instances, batch_img_metas,
+                              batch_gt_instances_ignore)
+        losses = self.loss_by_feat(x,*loss_inputs)
+        return losses
+
+
+    def loss_by_feat_single(self, feature_map: Tensor, cls_score: Tensor, bbox_pred: Tensor,
                             angle_pred: Tensor, labels: Tensor,
                             label_weights: Tensor, bbox_targets: Tensor,
                             assign_metrics: Tensor, stride: List[int]):
@@ -171,6 +203,7 @@ class RotatedRTMDetHead(RTMDetHead):
 
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(
             -1, self.cls_out_channels).contiguous()
+        feature_map = feature_map.permute(0, 2, 3, 1).reshape(-1, 256).contiguous()
 
         if self.use_hbbox_loss:
             bbox_pred = bbox_pred.reshape(-1, 4)
@@ -232,19 +265,35 @@ class RotatedRTMDetHead(RTMDetHead):
                 avg_factor=1.0)
             cls_score_new = []
             for i in range(batch_size):
-                pos_ind_2d = pos_inds_origin[pos_inds_origin[:,0]==i]
-                pos_ind_1d = pos_ind_2d[:,0]*pixel_num+pos_ind_2d[:,1]
-                pos_cls_score = cls_score[pos_ind_1d]
-                # pos_idx_norm = pos_ind_2d[:,1]/pixel_num
-                pos_idx_x = pos_ind_2d[:,1]%width*stride[0]
-                pos_idx_y = pos_ind_2d[:,1]//width*stride[1]
 
-                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
-                # print(pos_idx_norm)
-                if len(pos_idx) != 0:
-                    cls_score_new.append(self.relation_transformer(torch.sigmoid(pos_cls_score), pos_idx))
+                pos_ind_2d = pos_inds_origin[pos_inds_origin[:,0]==i]
+                pos_ind_1d = pos_ind_2d[:,1]
+                # print(pos_ind_2d)
+                # print(pos_ind_1d)
+                # import pdb
+
+                # pdb.set_trace()
+                feature_map_i = feature_map[i*pixel_num:(i+1)*pixel_num]
+                # print(feature_map_i)
+                feature_map_i = self.position_embedding(feature_map_i, stride[0])
+                # print(feature_map_i)
+
+                if len(pos_ind_1d) != 0:
+                    feature_scene_matrix = torch.matmul(self.scene_prior_token, feature_map_i.permute(1,0))/pixel_num ### L*HW
+                    feature_object_matrix = torch.matmul(feature_map_i,feature_map_i[pos_ind_1d].permute(1,0))/pixel_num### HW*M
+
+                    Scene_object_matrix = torch.matmul(feature_scene_matrix, feature_object_matrix).permute(1,0)
+
+                    Scene_object_matrix = self.project1(Scene_object_matrix)
+                    Scene_object_matrix = torch.cat([Scene_object_matrix, feature_map_i[pos_ind_1d]], dim=1)
+
+                    pos_cls_score = self.relation_transformer(Scene_object_matrix)
+                    cls_score_new.append(pos_cls_score)
+            
             cls_score_new = torch.cat(cls_score_new)
             pos_label = labels[pos_inds]
+            # import pdb
+            # pdb.set_trace()
             loss_CFP =  F.cross_entropy(cls_score_new,pos_label)
             # pos_label_onehot = F.one_hot(pos_label, self.num_classes).float()
             # loss_CFP =  F.binary_cross_entropy_with_logits(cls_score_new,pos_label_onehot)
@@ -259,12 +308,14 @@ class RotatedRTMDetHead(RTMDetHead):
                 pos_bbox_weight.sum(), pos_bbox_weight.sum())
 
     def loss_by_feat(self,
+                     feature_map: List[Tensor],
                      cls_scores: List[Tensor],
                      bbox_preds: List[Tensor],
                      angle_preds: List[Tensor],
                      batch_gt_instances: InstanceList,
                      batch_img_metas: List[dict],
-                     batch_gt_instances_ignore: OptInstanceList = None):
+                     batch_gt_instances_ignore: OptInstanceList = None,
+                     ):
         """Compute losses of the head.
 
         Args:
@@ -300,7 +351,7 @@ class RotatedRTMDetHead(RTMDetHead):
                                                   self.cls_out_channels)
             for cls_score in cls_scores
         ], 1)
-
+        
         decoded_bboxes = []
         decoded_hbboxes = []
         angle_preds_list = []
@@ -342,7 +393,7 @@ class RotatedRTMDetHead(RTMDetHead):
 
         (losses_cls, loss_CFP, losses_bbox, losses_angle, cls_avg_factors,
          bbox_avg_factors, angle_avg_factors) = multi_apply(
-             self.loss_by_feat_single, cls_scores, decoded_bboxes,
+             self.loss_by_feat_single, feature_map, cls_scores, decoded_bboxes,
              angle_preds_list, labels_list, label_weights_list,
              bbox_targets_list, assign_metrics_list,
              self.prior_generator.strides)
@@ -481,6 +532,7 @@ class RotatedRTMDetHead(RTMDetHead):
                 sampling_result)
 
     def predict_by_feat(self,
+                        feature_map:  List[Tensor],
                         cls_scores: List[Tensor],
                         bbox_preds: List[Tensor],
                         angle_preds: List[Tensor],
@@ -560,6 +612,7 @@ class RotatedRTMDetHead(RTMDetHead):
                 score_factor_list = [None for _ in range(num_levels)]
 
             results = self._predict_by_feat_single(
+                feature_map = feature_map, 
                 cls_score_list=cls_score_list,
                 bbox_pred_list=bbox_pred_list,
                 angle_pred_list=angle_pred_list,
@@ -684,24 +737,24 @@ class RotatedRTMDetHead(RTMDetHead):
             priors = filtered_results['priors']
 
             stride = self.prior_generator.strides[level_idx]
-            # if len(scores_out)!=0:
-            #     pos_ind_2d = keep_idxs
-            #     pos_idx_x = pos_ind_2d%width*stride[0]
-            #     pos_idx_y = pos_ind_2d//width*stride[1]
+            if len(scores_out)!=0:
+                pos_ind_2d = keep_idxs
+                pos_idx_x = pos_ind_2d%width*stride[0]
+                pos_idx_y = pos_ind_2d//width*stride[1]
 
-            #     pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
-            #     scores = self.relation_transformer(scores[keep_idxs], pos_idx)
+                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
+                scores = self.relation_transformer(scores[keep_idxs], pos_idx)
 
-            #     # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
+                # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
                 
-            #     scores = F.softmax(scores/10)
-            #     labels = torch.argmax(scores, dim=1)
+                scores = F.softmax(scores/10)
+                labels = torch.argmax(scores, dim=1)
 
-            #     scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
+                scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
                 
-            # else:
-            labels = labels_out
-            scores = scores_out
+            else:
+                labels = labels_out
+                scores = scores_out
 
             # if torch.sum(labels-labels_out)!=0:
             #     print('labels_out',labels_out,'\n','label_refine',labels)
@@ -873,6 +926,37 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
             for rtm_obj in self.rtm_obj:
                 normal_init(rtm_obj, std=0.01, bias=bias_cls)
 
+    def predict(self,
+                x: Tuple[Tensor],
+                batch_data_samples: SampleList,
+                rescale: bool = False) -> InstanceList:
+        """Perform forward propagation of the detection head and predict
+        detection results on the features of the upstream network.
+
+        Args:
+            x (tuple[Tensor]): Multi-level features from the
+                upstream network, each is a 4D-tensor.
+            batch_data_samples (List[:obj:`DetDataSample`]): The Data
+                Samples. It usually includes information such as
+                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
+            rescale (bool, optional): Whether to rescale the results.
+                Defaults to False.
+
+        Returns:
+            list[obj:`InstanceData`]: Detection results of each image
+            after the post process.
+        """
+        batch_img_metas = [
+            data_samples.metainfo for data_samples in batch_data_samples
+        ]
+
+        outs = self(x)
+
+        predictions = self.predict_by_feat(
+            x, *outs, batch_img_metas=batch_img_metas, rescale=rescale)
+        return predictions
+
+
     def forward(self, feats: Tuple[Tensor, ...]) -> tuple:
         """Forward features from the upstream network.
 
@@ -907,7 +991,7 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
             for reg_layer in self.reg_convs[idx]:
                 reg_feat = reg_layer(reg_feat)
 
-            if self.with_objectness:
+            if self.with_objectness: 
                 objectness = self.rtm_obj[idx](reg_feat)
                 cls_score = inverse_sigmoid(
                     sigmoid_geometric_mean(cls_score, objectness))
@@ -926,40 +1010,63 @@ class RotatedRTMDetSepBNHead(RotatedRTMDetHead):
 
 
 class TransformerWithNormalizedPositionalEncoding(nn.Module):
-    def __init__(self, num_classes, num_layers=2, num_heads=1):
+    def __init__(self, num_classes, num_layers=2, num_heads=8):
         super(TransformerWithNormalizedPositionalEncoding, self).__init__()
         self.num_classes = num_classes
         self.num_layers = num_layers
         self.num_heads = num_heads
-        self.position_embedding_0 = nn.Embedding(1024, 64)
-        self.position_embedding_1 = nn.Embedding(1024, 64)
+        # self.position_embedding_0 = nn.Embedding(1024, 64)
+        # self.position_embedding_1 = nn.Embedding(1024, 64)
 
         # Transformer Encoder Layer
-        encoder_layers = nn.TransformerEncoderLayer(d_model=num_classes+64, 
+        encoder_layers = nn.TransformerEncoderLayer(d_model=320, 
                                                    nhead=num_heads, 
-                                                   dim_feedforward=512)
+                                                   dim_feedforward=384)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
-        self.layer_norm = nn.LayerNorm(num_classes+64)
-        self.ffn = nn.Linear(num_classes+64, num_classes)
+        self.layer_norm = nn.LayerNorm(320)
+        self.ffn = nn.Linear(320, num_classes)
 
-    def forward(self, x, idx):
+    def forward(self, x):
         # x shape: [N, K] where N is number of samples, K is number of classes
         # idx shape: [N, 1]
-        pos_0 = self.position_embedding_0(idx[:, 0])
-        pos_1 = self.position_embedding_1(idx[:, 1])
-        position_embedding = pos_0 + pos_1
-        # idx = idx.unsqueeze(-1)
-
         # Combine logits with normalized positional indices
-        x = torch.cat([x, position_embedding], dim=1)
-
         # Reshape for Transformer: [N, batch_size=1, K+1]
         x = x.unsqueeze(1)
-
         # Pass through Transformer
         x = self.transformer_encoder(x)
         x = self.layer_norm(x)
         x = self.ffn(x)
         x = x.squeeze(1)
 
+        return x
+    
+import math
+class PositionalEncoding2D(nn.Module):
+    def __init__(self, channels, orig_height, orig_width):
+        super(PositionalEncoding2D, self).__init__()
+
+        # 根据原始图像尺寸生成位置编码
+        pe_height = torch.zeros(orig_height, channels)
+        pe_width = torch.zeros(orig_width, channels)
+
+        position_h = torch.arange(0, orig_height, dtype=torch.float32).unsqueeze(1)
+        position_w = torch.arange(0, orig_width, dtype=torch.float32).unsqueeze(1)
+
+        div_term = torch.exp(torch.arange(0, channels, 2).float() * (-math.log(10000.0) / channels))
+
+        pe_height[:, 0::2] = torch.sin(position_h * div_term)
+        pe_height[:, 1::2] = torch.cos(position_h * div_term)
+
+        pe_width[:, 0::2] = torch.sin(position_w * div_term)
+        pe_width[:, 1::2] = torch.cos(position_w * div_term)
+
+        pe_height = pe_height.unsqueeze(1).repeat(1, orig_width, 1)
+        pe_width = pe_width.unsqueeze(0).repeat(orig_height, 1, 1)
+
+        self.register_buffer('pe', pe_height + pe_width)
+
+    def forward(self, x, stride):
+        # 根据stride调整位置编码以匹配降采样后的特征图
+        downsampled_pe = self.pe[::stride, ::stride].reshape(-1, 256)
+        x = x + downsampled_pe
         return x
