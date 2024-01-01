@@ -627,6 +627,7 @@ class RotatedRTMDetHead(RTMDetHead):
         return result_list
 
     def _predict_by_feat_single(self,
+                                feature_map: List[Tensor],
                                 cls_score_list: List[Tensor],
                                 bbox_pred_list: List[Tensor],
                                 angle_pred_list: List[Tensor],
@@ -690,6 +691,7 @@ class RotatedRTMDetHead(RTMDetHead):
         mlvl_valid_priors = []
         mlvl_scores = []
         mlvl_labels = []
+
         if with_score_factors:
             mlvl_score_factors = []
         else:
@@ -700,7 +702,7 @@ class RotatedRTMDetHead(RTMDetHead):
                               score_factor_list, mlvl_priors)):
             height, width = cls_score.size()[-2:]
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
-
+            pixel_num = height*width
             bbox_pred = bbox_pred.permute(1, 2, 0).reshape(-1, 4)
             angle_pred = angle_pred.permute(1, 2, 0).reshape(
                 -1, self.angle_coder.encode_size)
@@ -738,19 +740,32 @@ class RotatedRTMDetHead(RTMDetHead):
 
             stride = self.prior_generator.strides[level_idx]
             if len(scores_out)!=0:
+                # pos_ind_2d = keep_idxs
+                # pos_idx_x = pos_ind_2d%width*stride[0]
+                # pos_idx_y = pos_ind_2d//width*stride[1]
+                # pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
                 pos_ind_2d = keep_idxs
-                pos_idx_x = pos_ind_2d%width*stride[0]
-                pos_idx_y = pos_ind_2d//width*stride[1]
 
-                pos_idx =  torch.stack([pos_idx_x,pos_idx_y],dim=1)
-                scores = self.relation_transformer(scores[keep_idxs], pos_idx)
+                feature_map_i = feature_map[level_idx].permute(0, 2, 3, 1).reshape(-1, 256).contiguous()
 
+                feature_map_i = self.position_embedding(feature_map_i, stride[0])
+
+                feature_scene_matrix = torch.matmul(self.scene_prior_token, feature_map_i.permute(1,0))/pixel_num ### L*HW
+                feature_object_matrix = torch.matmul(feature_map_i,feature_map_i[pos_ind_2d].permute(1,0))/pixel_num### HW*M
+                Scene_object_matrix = torch.matmul(feature_scene_matrix, feature_object_matrix).permute(1,0)
+
+                Scene_object_matrix = self.project1(Scene_object_matrix)
+
+                Scene_object_matrix = torch.cat([Scene_object_matrix, feature_map_i[pos_ind_2d]], dim=1)
+
+                scores = self.relation_transformer(Scene_object_matrix)
+
+                # scores = self.relation_transformer(scores[keep_idxs],)
                 # scores = self.relation_transformer(torch.logit(scores[keep_idxs]), keep_idxs/num_point)
                 
                 scores = F.softmax(scores/10)
                 labels = torch.argmax(scores, dim=1)
-
-                scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out\
+                scores = 0.05*torch.max(scores, dim=1)[0] + 0.95*scores_out
                 
             else:
                 labels = labels_out
